@@ -9,7 +9,7 @@ plugins {
 
 kotlin {
     jvm()
-    
+
     sourceSets {
         commonMain.dependencies {
             implementation(libs.compose.runtime)
@@ -18,9 +18,7 @@ kotlin {
             implementation(libs.compose.ui)
             implementation(libs.compose.components.resources)
             implementation(libs.compose.uiToolingPreview)
-            implementation(libs.androidx.lifecycle.viewmodelCompose)
-            implementation(libs.androidx.lifecycle.runtimeCompose)
-            implementation(projects.shared)
+            implementation(libs.kotlinx.coroutinesCore)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
@@ -28,7 +26,11 @@ kotlin {
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutinesSwing)
-            implementation(projects.server)
+            implementation(libs.kotlinx.serializationJson)
+        }
+        jvmTest.dependencies {
+            implementation(libs.kotlin.testJunit)
+            implementation(libs.junit)
         }
     }
 }
@@ -36,12 +38,16 @@ kotlin {
 
 compose.desktop {
     application {
-        mainClass = "org.compi.people_search.MainKt"
+        mainClass = "org.compi.pm2dash.MainKt"
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-            packageName = "org.compi.people_search"
+            packageName = "PM2 Dash"
             packageVersion = "1.0.0"
+
+            macOS {
+                iconFile.set(project.file("desktop-icons/mac/pm2dash.icns"))
+            }
         }
     }
 }
