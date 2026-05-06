@@ -2,6 +2,7 @@ package org.compi.pm2dash
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,7 +24,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
@@ -40,6 +44,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -48,6 +53,9 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -55,11 +63,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import org.compi.pm2dash.model.DashboardError
 import org.compi.pm2dash.model.DashboardState
 import org.compi.pm2dash.model.LogChannel
 import org.compi.pm2dash.model.LogFilter
 import org.compi.pm2dash.model.LogStreamEntry
+import org.compi.pm2dash.model.CustomProcessGroup
 import org.compi.pm2dash.model.Pm2DashboardUiState
 import org.compi.pm2dash.model.Pm2ProcessDetails
 import org.compi.pm2dash.model.Pm2ProcessGroup
@@ -67,6 +77,7 @@ import org.compi.pm2dash.model.Pm2ProcessStatus
 import org.compi.pm2dash.model.ProcessLogsState
 import org.compi.pm2dash.state.Pm2DashboardStore
 import org.compi.pm2dash.state.Pm2Repository
+import org.compi.pm2dash.state.ProcessGroupsRepository
 import org.compi.pm2dash.theme.Pm2DashTheme
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
@@ -74,8 +85,9 @@ import kotlin.time.Duration.Companion.milliseconds
 @Composable
 fun App(
     repository: Pm2Repository,
+    processGroupsRepository: ProcessGroupsRepository,
 ) {
-    val store = rememberDashboardStore(repository)
+    val store = rememberDashboardStore(repository, processGroupsRepository)
     val uiState = store.uiState
 
     LaunchedEffect(store) {
@@ -95,11 +107,20 @@ fun App(
         ) {
             DashboardScreen(
                 uiState = uiState,
-                onRefresh = store::refreshNow,
+                onSaveProcessList = store::saveProcessList,
+                onResurrectProcessList = store::resurrectProcessList,
                 onSelectProcess = store::selectProcess,
                 onFilterChange = store::updateLogFilter,
                 onFollowChange = store::setFollowLogs,
                 onClearLogs = store::clearLogs,
+                onRestartProcess = store::restartProcess,
+                onStopProcess = store::stopProcess,
+                onRestartGroup = store::restartGroup,
+                onStopGroup = store::stopGroup,
+                onCreateGroup = store::createGroup,
+                onAssignToGroup = store::assignSelectedProcessToGroup,
+                onRemoveFromCustomGroups = store::removeSelectedProcessFromCustomGroups,
+                onDeleteGroup = store::deleteGroup,
             )
         }
     }
@@ -108,21 +129,35 @@ fun App(
 @Composable
 private fun rememberDashboardStore(
     repository: Pm2Repository,
+    processGroupsRepository: ProcessGroupsRepository,
 ): Pm2DashboardStore {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    return remember(repository, scope) {
-        Pm2DashboardStore(repository = repository, scope = scope)
+    return remember(repository, processGroupsRepository, scope) {
+        Pm2DashboardStore(
+            repository = repository,
+            processGroupsRepository = processGroupsRepository,
+            scope = scope,
+        )
     }
 }
 
 @Composable
 private fun DashboardScreen(
     uiState: Pm2DashboardUiState,
-    onRefresh: () -> Unit,
+    onSaveProcessList: () -> Unit,
+    onResurrectProcessList: () -> Unit,
     onSelectProcess: (Int) -> Unit,
     onFilterChange: (LogFilter) -> Unit,
     onFollowChange: (Boolean) -> Unit,
     onClearLogs: () -> Unit,
+    onRestartProcess: (Int) -> Unit,
+    onStopProcess: (Int) -> Unit,
+    onRestartGroup: (List<Int>) -> Unit,
+    onStopGroup: (List<Int>) -> Unit,
+    onCreateGroup: (String) -> Unit,
+    onAssignToGroup: (String) -> Unit,
+    onRemoveFromCustomGroups: () -> Unit,
+    onDeleteGroup: (String) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -130,7 +165,10 @@ private fun DashboardScreen(
             .background(MaterialTheme.colorScheme.background)
             .padding(18.dp),
     ) {
-        DashboardHeader(uiState = uiState, onRefresh = onRefresh)
+        DashboardHeader(
+            onSaveProcessList = onSaveProcessList,
+            onResurrectProcessList = onResurrectProcessList,
+        )
         Spacer(Modifier.height(16.dp))
 
         when (val state = uiState.dashboardState) {
@@ -145,6 +183,14 @@ private fun DashboardScreen(
                     onFilterChange = onFilterChange,
                     onFollowChange = onFollowChange,
                     onClearLogs = onClearLogs,
+                    onRestartProcess = onRestartProcess,
+                    onStopProcess = onStopProcess,
+                    onRestartGroup = onRestartGroup,
+                    onStopGroup = onStopGroup,
+                    onCreateGroup = onCreateGroup,
+                    onAssignToGroup = onAssignToGroup,
+                    onRemoveFromCustomGroups = onRemoveFromCustomGroups,
+                    onDeleteGroup = onDeleteGroup,
                 )
             }
         }
@@ -153,8 +199,8 @@ private fun DashboardScreen(
 
 @Composable
 private fun DashboardHeader(
-    uiState: Pm2DashboardUiState,
-    onRefresh: () -> Unit,
+    onSaveProcessList: () -> Unit,
+    onResurrectProcessList: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -178,13 +224,11 @@ private fun DashboardHeader(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = uiState.lastUpdatedEpochMs?.let { "Updated ${formatRelativeTime(it)}" } ?: "Waiting for first snapshot",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Button(onClick = onRefresh) {
-                Text(if (uiState.isRefreshing) "Refreshing..." else "Refresh")
+            OutlinedButton(onClick = onSaveProcessList) {
+                Text("Save")
+            }
+            OutlinedButton(onClick = onResurrectProcessList) {
+                Text("Restore")
             }
         }
     }
@@ -198,6 +242,14 @@ private fun DashboardContent(
     onFilterChange: (LogFilter) -> Unit,
     onFollowChange: (Boolean) -> Unit,
     onClearLogs: () -> Unit,
+    onRestartProcess: (Int) -> Unit,
+    onStopProcess: (Int) -> Unit,
+    onRestartGroup: (List<Int>) -> Unit,
+    onStopGroup: (List<Int>) -> Unit,
+    onCreateGroup: (String) -> Unit,
+    onAssignToGroup: (String) -> Unit,
+    onRemoveFromCustomGroups: () -> Unit,
+    onDeleteGroup: (String) -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxSize(),
@@ -205,8 +257,15 @@ private fun DashboardContent(
     ) {
         ProcessSidebar(
             groups = groups,
+            customGroups = uiState.customGroups,
             selectedProcessId = uiState.selectedProcessId,
             onSelectProcess = onSelectProcess,
+            onAssignToGroup = onAssignToGroup,
+            onRemoveFromCustomGroups = onRemoveFromCustomGroups,
+            onRestartProcess = onRestartProcess,
+            onStopProcess = onStopProcess,
+            onRestartGroup = onRestartGroup,
+            onStopGroup = onStopGroup,
             modifier = Modifier.width(310.dp).fillMaxHeight(),
         )
 
@@ -220,9 +279,14 @@ private fun DashboardContent(
                 logFilter = uiState.logFilter,
                 followLogs = uiState.followLogs,
                 isClearingLogs = uiState.isClearingLogs,
+                customGroups = uiState.customGroups,
                 onFilterChange = onFilterChange,
                 onFollowChange = onFollowChange,
                 onClearLogs = onClearLogs,
+                onCreateGroup = onCreateGroup,
+                onAssignToGroup = onAssignToGroup,
+                onRemoveFromCustomGroups = onRemoveFromCustomGroups,
+                onDeleteGroup = onDeleteGroup,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -232,8 +296,15 @@ private fun DashboardContent(
 @Composable
 private fun ProcessSidebar(
     groups: List<Pm2ProcessGroup>,
+    customGroups: List<CustomProcessGroup>,
     selectedProcessId: Int?,
     onSelectProcess: (Int) -> Unit,
+    onAssignToGroup: (String) -> Unit,
+    onRemoveFromCustomGroups: () -> Unit,
+    onRestartProcess: (Int) -> Unit,
+    onStopProcess: (Int) -> Unit,
+    onRestartGroup: (List<Int>) -> Unit,
+    onStopGroup: (List<Int>) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Card(
@@ -252,30 +323,68 @@ private fun ProcessSidebar(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(groups, key = { it.name }) { group ->
+                items(groups, key = { "${if (it.isCustom) "custom" else "auto"}-${it.name}" }) { group ->
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
                                 text = group.name,
+                                modifier = Modifier.weight(1f),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
-                            StatusPill(
-                                text = "${group.processes.size} instance${if (group.processes.size == 1) "" else "s"}",
-                                container = MaterialTheme.colorScheme.surfaceVariant,
-                                content = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                IconButton(
+                                    onClick = { onRestartGroup(group.processes.map { it.summary.pmId }) },
+                                    enabled = group.processes.isNotEmpty(),
+                                ) {
+                                    Text(
+                                        text = "↻",
+                                        fontSize = 16.sp,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { onStopGroup(group.processes.map { it.summary.pmId }) },
+                                    enabled = group.processes.isNotEmpty(),
+                                ) {
+                                    Text(
+                                        text = "■",
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                                StatusPill(
+                                    text = "${group.processes.size}",
+                                    container = MaterialTheme.colorScheme.surfaceVariant,
+                                    content = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
 
                         group.processes.forEach { process ->
                             ProcessListItem(
                                 process = process,
+                                customGroups = customGroups,
                                 selected = selectedProcessId == process.summary.pmId,
                                 onClick = { onSelectProcess(process.summary.pmId) },
+                                onAssignToGroup = { groupName ->
+                                    onSelectProcess(process.summary.pmId)
+                                    onAssignToGroup(groupName)
+                                },
+                                onRemoveFromGroup = {
+                                    onSelectProcess(process.summary.pmId)
+                                    onRemoveFromCustomGroups()
+                                },
+                                onRestart = { onRestartProcess(process.summary.pmId) },
+                                onStop = { onStopProcess(process.summary.pmId) },
                             )
                         }
                     }
@@ -286,10 +395,78 @@ private fun ProcessSidebar(
 }
 
 @Composable
+private fun CustomGroupListItem(
+    group: CustomProcessGroup,
+    onDelete: () -> Unit,
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = group.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+                OutlinedButton(onClick = onDelete) {
+                    Text("Delete")
+                }
+            }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (group.processNames.isEmpty()) {
+                    Text(
+                        text = "No process names assigned",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    group.processNames.forEach { processName ->
+                        StatusPill(
+                            text = processName,
+                            container = MaterialTheme.colorScheme.surface,
+                            content = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "${group.processNames.size} name${if (group.processNames.size == 1) "" else "s"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalComposeUiApi::class)
 private fun ProcessListItem(
     process: Pm2ProcessDetails,
+    customGroups: List<CustomProcessGroup>,
     selected: Boolean,
     onClick: () -> Unit,
+    onAssignToGroup: (String) -> Unit,
+    onRemoveFromGroup: () -> Unit,
+    onRestart: () -> Unit,
+    onStop: () -> Unit,
 ) {
     val containerColor = if (selected) {
         MaterialTheme.colorScheme.primaryContainer
@@ -302,42 +479,103 @@ private fun ProcessListItem(
     } else {
         MaterialTheme.colorScheme.outlineVariant
     }
+    val assignedGroup = remember(customGroups, process.summary.name) {
+        customGroups.firstOrNull { process.summary.name in it.processNames }?.name
+    }
+    var contextMenuExpanded by remember { mutableStateOf(false) }
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .border(1.dp, borderColor, MaterialTheme.shapes.medium),
-        onClick = onClick,
-        colors = CardDefaults.cardColors(containerColor = containerColor),
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+    Box {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, borderColor, MaterialTheme.shapes.medium)
+                .onPointerEvent(PointerEventType.Press) { event ->
+                    if (event.buttons.isSecondaryPressed) {
+                        contextMenuExpanded = true
+                    }
+                },
+            onClick = onClick,
+            colors = CardDefaults.cardColors(containerColor = containerColor),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ProcessStatusDot(process.summary.status)
+                        Text(
+                            text = process.summary.name,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(0.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CompactIconButton(onClick = onRestart) {
+                            Text(
+                                text = "↻",
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                        CompactIconButton(onClick = onStop) {
+                            Text(
+                                text = "■",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                }
+
                 Text(
-                    text = "#${process.summary.pmId}",
-                    style = MaterialTheme.typography.labelMedium,
+                    text = "${formatCpu(process.summary.cpuPercent)} CPU  •  ${formatMemory(process.summary.memoryBytes)}",
+                    style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                StatusPillForProcess(process.summary.status)
+            }
+        }
+
+        DropdownMenu(
+            expanded = contextMenuExpanded,
+            onDismissRequest = { contextMenuExpanded = false },
+        ) {
+            customGroups.forEach { group ->
+                DropdownMenuItem(
+                    text = { Text("Add to ${group.name}") },
+                    onClick = {
+                        contextMenuExpanded = false
+                        onAssignToGroup(group.name)
+                    },
+                )
             }
 
-            Text(
-                text = "PID ${process.summary.pid ?: "n/a"}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+            if (customGroups.isNotEmpty() && assignedGroup != null) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            }
 
-            Text(
-                text = "${formatCpu(process.summary.cpuPercent)} CPU  •  ${formatMemory(process.summary.memoryBytes)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (assignedGroup != null) {
+                DropdownMenuItem(
+                    text = { Text("Remove from $assignedGroup") },
+                    onClick = {
+                        contextMenuExpanded = false
+                        onRemoveFromGroup()
+                    },
+                )
+            }
         }
     }
 }
@@ -345,6 +583,7 @@ private fun ProcessListItem(
 private enum class ProcessTab {
     Logs,
     Details,
+    Groups,
 }
 
 @Composable
@@ -354,9 +593,14 @@ private fun ProcessWorkspace(
     logFilter: LogFilter,
     followLogs: Boolean,
     isClearingLogs: Boolean,
+    customGroups: List<CustomProcessGroup>,
     onFilterChange: (LogFilter) -> Unit,
     onFollowChange: (Boolean) -> Unit,
     onClearLogs: () -> Unit,
+    onCreateGroup: (String) -> Unit,
+    onAssignToGroup: (String) -> Unit,
+    onRemoveFromCustomGroups: () -> Unit,
+    onDeleteGroup: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(ProcessTab.Logs.name) }
@@ -375,7 +619,15 @@ private fun ProcessWorkspace(
                     Tab(
                         selected = activeTab == tab,
                         onClick = { selectedTab = tab.name },
-                        text = { Text(if (tab == ProcessTab.Logs) "Logs" else "Details") },
+                        text = {
+                            Text(
+                                when (tab) {
+                                    ProcessTab.Logs -> "Logs"
+                                    ProcessTab.Details -> "Details"
+                                    ProcessTab.Groups -> "Groups"
+                                },
+                            )
+                        },
                     )
                 }
             }
@@ -396,6 +648,85 @@ private fun ProcessWorkspace(
                 ProcessTab.Details -> ProcessDetailsPanel(
                     selectedProcess = selectedProcess,
                     modifier = Modifier.fillMaxSize(),
+                )
+
+                ProcessTab.Groups -> GroupsPanelContent(
+                    customGroups = customGroups,
+                    onCreateGroup = onCreateGroup,
+                    onDeleteGroup = onDeleteGroup,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GroupsPanelContent(
+    customGroups: List<CustomProcessGroup>,
+    onCreateGroup: (String) -> Unit,
+    onDeleteGroup: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var newGroupName by rememberSaveable { mutableStateOf("") }
+
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "Custom Groups",
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = "Create or delete groups here. Assign and remove services from the process list with right click.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = newGroupName,
+                onValueChange = { newGroupName = it },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                label = { Text("New group") },
+            )
+            Button(
+                onClick = {
+                    onCreateGroup(newGroupName)
+                    newGroupName = ""
+                },
+                enabled = newGroupName.isNotBlank(),
+            ) {
+                Text("Create")
+            }
+        }
+
+        if (customGroups.isEmpty()) {
+            EmptyInlineCard(
+                title = "No custom groups",
+                message = "Create a group here, then right click a service in the process list to add it.",
+                modifier = Modifier.fillMaxSize(),
+            )
+            return
+        }
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(customGroups, key = { it.name }) { group ->
+                CustomGroupListItem(
+                    group = group,
+                    onDelete = { onDeleteGroup(group.name) },
                 )
             }
         }
@@ -664,7 +995,7 @@ private fun LogEntriesList(
                         verticalAlignment = Alignment.Top,
                     ) {
                         Text(
-                            text = formatTimestamp(entry.observedAtEpochMs),
+                            text = entry.observedAtLocalTime,
                             style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -708,18 +1039,37 @@ private fun ToggleChip(
 }
 
 @Composable
-private fun StatusPillForProcess(
+private fun ProcessStatusDot(
     status: Pm2ProcessStatus,
 ) {
-    val (container, content, text) = when (status) {
-        Pm2ProcessStatus.Online -> Triple(Color(0xFF163D2E), Color(0xFF7EF2C8), "ONLINE")
-        Pm2ProcessStatus.Stopped -> Triple(Color(0xFF373E49), Color(0xFFD2DBE8), "STOPPED")
-        Pm2ProcessStatus.Errored -> Triple(Color(0xFF5A1623), Color(0xFFFFB4C0), "ERRORED")
-        Pm2ProcessStatus.Launching -> Triple(Color(0xFF4A3600), Color(0xFFFFD98A), "LAUNCHING")
-        Pm2ProcessStatus.Unknown -> Triple(Color(0xFF273244), Color(0xFFB6CAE7), "UNKNOWN")
+    val color = when (status) {
+        Pm2ProcessStatus.Online -> Color(0xFF54D179)
+        Pm2ProcessStatus.Stopped -> Color(0xFF8D97A6)
+        Pm2ProcessStatus.Errored -> Color(0xFFFF6B7A)
+        Pm2ProcessStatus.Launching -> Color(0xFFFFD166)
+        Pm2ProcessStatus.Unknown -> Color(0xFF7FA8E8)
     }
 
-    StatusPill(text = text, container = container, content = content)
+    Box(
+        modifier = Modifier
+            .width(8.dp)
+            .height(8.dp)
+            .clip(CircleShape)
+            .background(color),
+    )
+}
+
+@Composable
+private fun CompactIconButton(
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier.width(28.dp).height(28.dp),
+    ) {
+        content()
+    }
 }
 
 @Composable
@@ -871,14 +1221,6 @@ private fun formatRelativeTime(epochMs: Long): String {
         delta.inWholeHours < 1 -> "${delta.inWholeMinutes}m ago"
         else -> "${delta.inWholeHours}h ago"
     }
-}
-
-private fun formatTimestamp(epochMs: Long): String {
-    val totalSeconds = epochMs / 1000
-    val seconds = totalSeconds % 60
-    val minutes = (totalSeconds / 60) % 60
-    val hours = (totalSeconds / 3600) % 24
-    return listOf(hours, minutes, seconds).joinToString(":") { it.toString().padStart(2, '0') }
 }
 
 private fun highlightSearchMatch(

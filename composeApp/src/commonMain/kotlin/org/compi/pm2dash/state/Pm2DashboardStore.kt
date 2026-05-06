@@ -11,6 +11,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.compi.pm2dash.model.CustomProcessGroup
 import org.compi.pm2dash.model.DashboardErrorKind
 import org.compi.pm2dash.model.DashboardState
 import org.compi.pm2dash.model.LogChannel
@@ -24,6 +25,7 @@ private const val PROCESS_POLL_INTERVAL_MS = 3_000L
 
 class Pm2DashboardStore(
     private val repository: Pm2Repository,
+    private val processGroupsRepository: ProcessGroupsRepository,
     private val scope: CoroutineScope,
 ) {
     var uiState by mutableStateOf(Pm2DashboardUiState())
@@ -38,6 +40,7 @@ class Pm2DashboardStore(
         if (processPollingJob != null) return
 
         processPollingJob = scope.launch {
+            loadCustomGroups()
             loadProcesses()
             while (isActive) {
                 delay(PROCESS_POLL_INTERVAL_MS)
@@ -116,6 +119,105 @@ class Pm2DashboardStore(
         }
     }
 
+    fun saveProcessList() {
+        scope.launch {
+            repository.saveProcessList()
+                .onSuccess {
+                    loadProcesses(forceRefreshIndicator = true)
+                }
+        }
+    }
+
+    fun resurrectProcessList() {
+        scope.launch {
+            repository.resurrectProcessList()
+                .onSuccess {
+                    loadProcesses(forceRefreshIndicator = true)
+                }
+        }
+    }
+
+    fun restartProcess(processId: Int) {
+        scope.launch {
+            repository.restartProcess(processId)
+                .onSuccess {
+                    loadProcesses(forceRefreshIndicator = true)
+                }
+        }
+    }
+
+    fun stopProcess(processId: Int) {
+        scope.launch {
+            repository.stopProcess(processId)
+                .onSuccess {
+                    loadProcesses(forceRefreshIndicator = true)
+                }
+        }
+    }
+
+    fun restartGroup(processIds: List<Int>) {
+        if (processIds.isEmpty()) return
+
+        scope.launch {
+            processIds.distinct().forEach { processId ->
+                repository.restartProcess(processId)
+            }
+            loadProcesses(forceRefreshIndicator = true)
+        }
+    }
+
+    fun stopGroup(processIds: List<Int>) {
+        if (processIds.isEmpty()) return
+
+        scope.launch {
+            processIds.distinct().forEach { processId ->
+                repository.stopProcess(processId)
+            }
+            loadProcesses(forceRefreshIndicator = true)
+        }
+    }
+
+    fun createGroup(name: String) {
+        val normalizedName = name.trim()
+        if (normalizedName.isBlank()) return
+
+        updateCustomGroups { groups ->
+            val existing = groups.find { it.name.equals(normalizedName, ignoreCase = true) }
+            if (existing != null) {
+                groups
+            } else {
+                groups + CustomProcessGroup(
+                    name = normalizedName,
+                    processNames = emptyList(),
+                )
+            }
+        }
+    }
+
+    fun assignSelectedProcessToGroup(groupName: String) {
+        val processName = uiState.selectedProcess?.summary?.name ?: return
+
+        updateCustomGroups { groups ->
+            val withoutProcess = groups.removeProcessName(processName)
+            withoutProcess.map { group ->
+                if (group.name == groupName) {
+                    group.copy(processNames = (group.processNames + processName).distinct().sorted())
+                } else {
+                    group
+                }
+            }
+        }
+    }
+
+    fun removeSelectedProcessFromCustomGroups() {
+        val processName = uiState.selectedProcess?.summary?.name ?: return
+        updateCustomGroups { groups -> groups.removeProcessName(processName) }
+    }
+
+    fun deleteGroup(groupName: String) {
+        updateCustomGroups { groups -> groups.filterNot { it.name == groupName } }
+    }
+
     private suspend fun loadProcesses(forceRefreshIndicator: Boolean = false) {
         refreshMutex.withLock {
             if (forceRefreshIndicator) {
@@ -162,9 +264,10 @@ class Pm2DashboardStore(
                         return
                     }
 
-                    val groups = processes.groupBy { it.summary.name }
-                        .map { (name, instances) -> Pm2ProcessGroup(name = name, processes = instances) }
-                        .sortedBy { it.name.lowercase() }
+                    val groups = buildProcessGroups(
+                        processes = processes,
+                        customGroups = uiState.customGroups,
+                    )
 
                     val selected = processes.firstOrNull { it.summary.pmId == uiState.selectedProcessId } ?: processes.first()
                     val selectedChanged = selected.summary.pmId != uiState.selectedProcessId
@@ -227,5 +330,96 @@ class Pm2DashboardStore(
         }
     }
 
+    private suspend fun loadCustomGroups() {
+        val groups = processGroupsRepository.loadGroups().getOrDefault(emptyList())
+        uiState = uiState.copy(customGroups = groups.normalizeCustomGroups())
+    }
+
+    private fun updateCustomGroups(
+        transform: (List<CustomProcessGroup>) -> List<CustomProcessGroup>,
+    ) {
+        scope.launch {
+            refreshMutex.withLock {
+                val updatedGroups = transform(uiState.customGroups).normalizeCustomGroups()
+                processGroupsRepository.saveGroups(updatedGroups)
+                    .onSuccess {
+                        val currentDashboardState = uiState.dashboardState
+                        val refreshedDashboardState = when (currentDashboardState) {
+                            is DashboardState.Ready -> DashboardState.Ready(
+                                buildProcessGroups(
+                                    processes = currentDashboardState.groups.flatMap(Pm2ProcessGroup::processes).distinctBy { it.summary.pmId },
+                                    customGroups = updatedGroups,
+                                ),
+                            )
+
+                            else -> currentDashboardState
+                        }
+
+                        uiState = uiState.copy(
+                            customGroups = updatedGroups,
+                            dashboardState = refreshedDashboardState,
+                        )
+                    }
+            }
+        }
+    }
+
     private fun Pm2ProcessDetails.nameKey(): String = summary.name
+}
+
+private fun buildProcessGroups(
+    processes: List<Pm2ProcessDetails>,
+    customGroups: List<CustomProcessGroup>,
+): List<Pm2ProcessGroup> {
+    val processByName = processes.groupBy { it.summary.name }
+    val assignedNames = customGroups.flatMap(CustomProcessGroup::processNames).toSet()
+
+    val customProcessGroups = customGroups.map { group ->
+        val groupProcesses = group.processNames
+            .flatMap { processByName[it].orEmpty() }
+            .sortedBy { it.summary.pmId }
+
+        Pm2ProcessGroup(
+            name = group.name,
+            processes = groupProcesses,
+            isCustom = true,
+        )
+    }
+
+    val automaticGroups = processes
+        .filterNot { it.summary.name in assignedNames }
+        .groupBy { it.summary.name }
+        .map { (name, instances) ->
+            Pm2ProcessGroup(
+                name = name,
+                processes = instances.sortedBy { it.summary.pmId },
+            )
+        }
+        .sortedBy { it.name.lowercase() }
+
+    return customProcessGroups + automaticGroups
+}
+
+private fun List<CustomProcessGroup>.removeProcessName(processName: String): List<CustomProcessGroup> {
+    return map { group ->
+        group.copy(processNames = group.processNames.filterNot { it == processName })
+    }
+}
+
+private fun List<CustomProcessGroup>.normalizeCustomGroups(): List<CustomProcessGroup> {
+    return mapNotNull { group ->
+        val normalizedName = group.name.trim()
+        if (normalizedName.isBlank()) {
+            null
+        } else {
+            group.copy(
+                name = normalizedName,
+                processNames = group.processNames
+                    .map(String::trim)
+                    .filter(String::isNotBlank)
+                    .distinct()
+                    .sorted(),
+            )
+        }
+    }
 }

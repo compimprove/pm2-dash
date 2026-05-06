@@ -10,6 +10,9 @@ import org.compi.pm2dash.model.DashboardErrorKind
 import org.compi.pm2dash.model.LogChannel
 import org.compi.pm2dash.model.LogStreamEntry
 import org.compi.pm2dash.model.ProcessLogsState
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.nio.file.Path
 import kotlin.io.path.bufferedReader
 import kotlin.io.path.exists
@@ -101,9 +104,18 @@ internal fun readLastLines(
             channel = channel,
             message = line,
             observedAtEpochMs = timestamp + index,
+            observedAtLocalTime = formatLocalLogTime(timestamp + index),
         )
     }
 }
+
+private fun formatLocalLogTime(epochMs: Long): String {
+    return LOCAL_LOG_TIME_FORMATTER.format(
+        Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()),
+    )
+}
+
+private val LOCAL_LOG_TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
 
 private fun ProcessLogsState.fingerprint(): String = when (this) {
     ProcessLogsState.Idle -> "idle"

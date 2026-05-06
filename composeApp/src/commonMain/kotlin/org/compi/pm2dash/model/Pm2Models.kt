@@ -58,6 +58,12 @@ data class Pm2ProcessDetails(
 data class Pm2ProcessGroup(
     val name: String,
     val processes: List<Pm2ProcessDetails>,
+    val isCustom: Boolean = false,
+)
+
+data class CustomProcessGroup(
+    val name: String,
+    val processNames: List<String>,
 )
 
 data class LogStreamEntry(
@@ -65,6 +71,7 @@ data class LogStreamEntry(
     val channel: LogChannel,
     val message: String,
     val observedAtEpochMs: Long,
+    val observedAtLocalTime: String,
 )
 
 sealed interface DashboardState {
@@ -103,6 +110,7 @@ sealed interface ProcessLogsState {
 
 data class Pm2DashboardUiState(
     val dashboardState: DashboardState = DashboardState.Loading,
+    val customGroups: List<CustomProcessGroup> = emptyList(),
     val selectedProcessId: Int? = null,
     val selectedProcess: Pm2ProcessDetails? = null,
     val logsState: ProcessLogsState = ProcessLogsState.Idle,

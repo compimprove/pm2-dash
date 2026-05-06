@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.FrameWindowScope
 import androidx.compose.ui.window.application
+import org.compi.pm2dash.data.createProcessGroupsRepository
 import org.compi.pm2dash.data.createPm2Repository
 import java.awt.Color
 import java.awt.Taskbar
@@ -18,7 +19,10 @@ fun main() = application {
         title = "",
     ) {
         MacOsDarkTitleBar()
-        App(repository = createPm2Repository())
+        App(
+            repository = createPm2Repository(),
+            processGroupsRepository = createProcessGroupsRepository(),
+        )
     }
 }
 

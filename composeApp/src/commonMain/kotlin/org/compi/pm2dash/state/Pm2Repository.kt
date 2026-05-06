@@ -19,4 +19,8 @@ interface Pm2Repository {
     suspend fun loadProcesses(): Pm2ProcessLoadResult
     fun streamLogs(processName: String): Flow<ProcessLogsState>
     suspend fun clearLogs(processName: String): Result<Unit>
+    suspend fun saveProcessList(): Result<Unit>
+    suspend fun resurrectProcessList(): Result<Unit>
+    suspend fun restartProcess(processId: Int): Result<Unit>
+    suspend fun stopProcess(processId: Int): Result<Unit>
 }

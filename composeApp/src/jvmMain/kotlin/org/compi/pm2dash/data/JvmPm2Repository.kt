@@ -85,6 +85,47 @@ internal class JvmPm2Repository(
             }
         }
     }
+
+    override suspend fun saveProcessList(): Result<Unit> {
+        return runPm2SimpleCommand("save")
+    }
+
+    override suspend fun resurrectProcessList(): Result<Unit> {
+        return runPm2SimpleCommand("resurrect")
+    }
+
+    override suspend fun restartProcess(processId: Int): Result<Unit> {
+        return runPm2ControlCommand("restart", processId)
+    }
+
+    override suspend fun stopProcess(processId: Int): Result<Unit> {
+        return runPm2ControlCommand("stop", processId)
+    }
+
+    private suspend fun runPm2ControlCommand(
+        action: String,
+        processId: Int,
+    ): Result<Unit> {
+        return runCatching {
+            val pm2Command = resolvePm2Command()
+            val result = commandExecutor.run(listOf(pm2Command, action, processId.toString()))
+            if (result.exitCode != 0) {
+                error(result.stderr.ifBlank { result.stdout }.ifBlank { "PM2 $action failed for process $processId." })
+            }
+        }
+    }
+
+    private suspend fun runPm2SimpleCommand(
+        action: String,
+    ): Result<Unit> {
+        return runCatching {
+            val pm2Command = resolvePm2Command()
+            val result = commandExecutor.run(listOf(pm2Command, action))
+            if (result.exitCode != 0) {
+                error(result.stderr.ifBlank { result.stdout }.ifBlank { "PM2 $action failed." })
+            }
+        }
+    }
 }
 
 fun createPm2Repository(): Pm2Repository = JvmPm2Repository()
