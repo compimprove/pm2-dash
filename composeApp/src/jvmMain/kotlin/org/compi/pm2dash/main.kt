@@ -4,6 +4,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.FrameWindowScope
+import androidx.compose.ui.window.WindowPlacement
+import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
 import org.compi.pm2dash.data.createProcessGroupsRepository
 import org.compi.pm2dash.data.createPm2Repository
@@ -17,6 +19,9 @@ fun main() = application {
             exitApplication()
         },
         title = "",
+        state = WindowState(
+            placement = WindowPlacement.Maximized,
+        ),
     ) {
         MacOsDarkTitleBar()
         App(
