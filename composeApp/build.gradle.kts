@@ -39,6 +39,7 @@ kotlin {
 compose.desktop {
     application {
         mainClass = "org.compi.pm2dash.MainKt"
+        jvmArgs("-Xmx256m")
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)

@@ -23,6 +23,7 @@ It is focused on local PM2 monitoring, not remote server management.
 - Read stdout, stderr, or combined PM2 logs
 - Follow live logs as files change
 - Clear process logs from the app
+- Delete individual PM2 processes from the app
 - Restart or stop individual PM2 processes
 - Restart or stop whole process groups
 - Save and restore the PM2 process list with `pm2 save` and `pm2 resurrect`

@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -113,6 +114,7 @@ fun App(
                 onFilterChange = store::updateLogFilter,
                 onFollowChange = store::setFollowLogs,
                 onClearLogs = store::clearLogs,
+                onDeleteProcess = store::deleteProcess,
                 onRestartProcess = store::restartProcess,
                 onStopProcess = store::stopProcess,
                 onRestartGroup = store::restartGroup,
@@ -150,6 +152,7 @@ private fun DashboardScreen(
     onFilterChange: (LogFilter) -> Unit,
     onFollowChange: (Boolean) -> Unit,
     onClearLogs: () -> Unit,
+    onDeleteProcess: (Int) -> Unit,
     onRestartProcess: (Int) -> Unit,
     onStopProcess: (Int) -> Unit,
     onRestartGroup: (List<Int>) -> Unit,
@@ -183,6 +186,7 @@ private fun DashboardScreen(
                     onFilterChange = onFilterChange,
                     onFollowChange = onFollowChange,
                     onClearLogs = onClearLogs,
+                    onDeleteProcess = onDeleteProcess,
                     onRestartProcess = onRestartProcess,
                     onStopProcess = onStopProcess,
                     onRestartGroup = onRestartGroup,
@@ -242,6 +246,7 @@ private fun DashboardContent(
     onFilterChange: (LogFilter) -> Unit,
     onFollowChange: (Boolean) -> Unit,
     onClearLogs: () -> Unit,
+    onDeleteProcess: (Int) -> Unit,
     onRestartProcess: (Int) -> Unit,
     onStopProcess: (Int) -> Unit,
     onRestartGroup: (List<Int>) -> Unit,
@@ -262,6 +267,7 @@ private fun DashboardContent(
             onSelectProcess = onSelectProcess,
             onAssignToGroup = onAssignToGroup,
             onRemoveFromCustomGroups = onRemoveFromCustomGroups,
+            onDeleteProcess = onDeleteProcess,
             onRestartProcess = onRestartProcess,
             onStopProcess = onStopProcess,
             onRestartGroup = onRestartGroup,
@@ -301,6 +307,7 @@ private fun ProcessSidebar(
     onSelectProcess: (Int) -> Unit,
     onAssignToGroup: (String) -> Unit,
     onRemoveFromCustomGroups: () -> Unit,
+    onDeleteProcess: (Int) -> Unit,
     onRestartProcess: (Int) -> Unit,
     onStopProcess: (Int) -> Unit,
     onRestartGroup: (List<Int>) -> Unit,
@@ -383,6 +390,7 @@ private fun ProcessSidebar(
                                     onSelectProcess(process.summary.pmId)
                                     onRemoveFromCustomGroups()
                                 },
+                                onDelete = { onDeleteProcess(process.summary.pmId) },
                                 onRestart = { onRestartProcess(process.summary.pmId) },
                                 onStop = { onStopProcess(process.summary.pmId) },
                             )
@@ -465,6 +473,7 @@ private fun ProcessListItem(
     onClick: () -> Unit,
     onAssignToGroup: (String) -> Unit,
     onRemoveFromGroup: () -> Unit,
+    onDelete: () -> Unit,
     onRestart: () -> Unit,
     onStop: () -> Unit,
 ) {
@@ -483,6 +492,7 @@ private fun ProcessListItem(
         customGroups.firstOrNull { process.summary.name in it.processNames }?.name
     }
     var contextMenuExpanded by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
 
     Box {
         Card(
@@ -576,7 +586,44 @@ private fun ProcessListItem(
                     },
                 )
             }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+            DropdownMenuItem(
+                text = { Text("Remove") },
+                onClick = {
+                    contextMenuExpanded = false
+                    showDeleteDialog = true
+                },
+            )
         }
+    }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("Delete PM2 process?") },
+            text = {
+                Text(
+                    "`${process.summary.name}` will be removed from the current PM2 process list.",
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteDialog = false
+                        onDelete()
+                    },
+                ) {
+                    Text("Remove")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showDeleteDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 }
 
@@ -948,7 +995,7 @@ private fun LogEntriesList(
 
     LaunchedEffect(entries.size, followLogs, searchQuery) {
         if (followLogs && entries.isNotEmpty() && searchQuery.isBlank()) {
-            listState.animateScrollToItem(entries.lastIndex)
+            listState.scrollToItem(entries.lastIndex)
         }
     }
 

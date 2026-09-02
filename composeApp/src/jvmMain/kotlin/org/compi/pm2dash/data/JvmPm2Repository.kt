@@ -94,6 +94,10 @@ internal class JvmPm2Repository(
         return runPm2SimpleCommand("resurrect")
     }
 
+    override suspend fun deleteProcess(processId: Int): Result<Unit> {
+        return runPm2ControlCommand("delete", processId)
+    }
+
     override suspend fun restartProcess(processId: Int): Result<Unit> {
         return runPm2ControlCommand("restart", processId)
     }

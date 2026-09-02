@@ -137,6 +137,20 @@ class Pm2DashboardStore(
         }
     }
 
+    fun deleteProcess(processId: Int) {
+        val processName = findProcessName(processId)
+
+        scope.launch {
+            repository.deleteProcess(processId)
+                .onSuccess {
+                    if (processName != null) {
+                        persistCustomGroups(uiState.customGroups.removeProcessName(processName))
+                    }
+                    loadProcesses(forceRefreshIndicator = true)
+                }
+        }
+    }
+
     fun restartProcess(processId: Int) {
         scope.launch {
             repository.restartProcess(processId)
@@ -335,33 +349,46 @@ class Pm2DashboardStore(
         uiState = uiState.copy(customGroups = groups.normalizeCustomGroups())
     }
 
+    private fun findProcessName(processId: Int): String? {
+        val groups = (uiState.dashboardState as? DashboardState.Ready)?.groups.orEmpty()
+        return groups
+            .flatMap(Pm2ProcessGroup::processes)
+            .firstOrNull { it.summary.pmId == processId }
+            ?.summary
+            ?.name
+    }
+
     private fun updateCustomGroups(
         transform: (List<CustomProcessGroup>) -> List<CustomProcessGroup>,
     ) {
         scope.launch {
             refreshMutex.withLock {
                 val updatedGroups = transform(uiState.customGroups).normalizeCustomGroups()
-                processGroupsRepository.saveGroups(updatedGroups)
-                    .onSuccess {
-                        val currentDashboardState = uiState.dashboardState
-                        val refreshedDashboardState = when (currentDashboardState) {
-                            is DashboardState.Ready -> DashboardState.Ready(
-                                buildProcessGroups(
-                                    processes = currentDashboardState.groups.flatMap(Pm2ProcessGroup::processes).distinctBy { it.summary.pmId },
-                                    customGroups = updatedGroups,
-                                ),
-                            )
-
-                            else -> currentDashboardState
-                        }
-
-                        uiState = uiState.copy(
-                            customGroups = updatedGroups,
-                            dashboardState = refreshedDashboardState,
-                        )
-                    }
+                persistCustomGroups(updatedGroups)
             }
         }
+    }
+
+    private suspend fun persistCustomGroups(updatedGroups: List<CustomProcessGroup>) {
+        processGroupsRepository.saveGroups(updatedGroups)
+            .onSuccess {
+                val currentDashboardState = uiState.dashboardState
+                val refreshedDashboardState = when (currentDashboardState) {
+                    is DashboardState.Ready -> DashboardState.Ready(
+                        buildProcessGroups(
+                            processes = currentDashboardState.groups.flatMap(Pm2ProcessGroup::processes).distinctBy { it.summary.pmId },
+                            customGroups = updatedGroups,
+                        ),
+                    )
+
+                    else -> currentDashboardState
+                }
+
+                uiState = uiState.copy(
+                    customGroups = updatedGroups,
+                    dashboardState = refreshedDashboardState,
+                )
+            }
     }
 
     private fun Pm2ProcessDetails.nameKey(): String = summary.name
